@@ -150,6 +150,7 @@ export function migrate(): void {
 
   logger.info("Database migrations complete.");
 }
+migrate();
 
 // ---------------------------------------------------------------------------
 // Agent Queries
