@@ -17,10 +17,3 @@
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }
-```
-
-Key changes: `strict: false`, `noImplicitAny: false`, `declaration: false`, `skipLibCheck: true`, added `"DOM"` to lib. This will get it to compile. You can tighten it later.
-
-Also there's a code error — `src/core/payment.ts` line 248 references `signResult` which doesn't exist anymore. I need to fix that too. What's on that line? Change the **Build Command** temporarily to:
-```
-npm install && sed -n '245,255p' src/core/payment.ts && npm run build
