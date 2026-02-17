@@ -179,7 +179,7 @@ export async function processPayment(req: PaymentRequest): Promise<PaymentResult
       };
     }
 
-    // 9. MPC co-sign: reconstruct key from both shards and execute real transfer
+    // 9. MPC co-sign: verify agent shard matches their public key
     txQueries.updateStatus.run("signing", "signing", txId);
 
     // Reconstruct private key from server shard + agent shard
@@ -199,19 +199,34 @@ export async function processPayment(req: PaymentRequest): Promise<PaymentResult
     const fullKeyBig = ((serverBig + agentBig) % n + n) % n;
     const fullKeyHex = fullKeyBig.toString(16).padStart(64, "0");
 
-    // 10. Execute real USDC transfer from agent's MPC wallet
+    // Verify the reconstructed key matches the agent's registered public key
+    const secp256k1 = await import("@noble/secp256k1");
+    const fullKeyBytes = new Uint8Array(Buffer.from(fullKeyHex, "hex"));
+    const derivedPubKey = Buffer.from(secp256k1.getPublicKey(fullKeyBytes, true)).toString("hex");
+
+    if (derivedPubKey !== agentRaw.mpc_public_key) {
+      throw new Error("MPC shard verification failed — agent shard does not match registered public key");
+    }
+
+    logger.info("MPC shard verified", { agent: req.agentId, pubKeyMatch: true });
+
+    // 10. Execute USDC transfer from vault hot wallet to recipient
+    // The MPC verification above proves the agent authorized this payment.
+    // The vault hot wallet holds the funds and executes the transfer.
     txQueries.updateStatus.run("broadcasting", "broadcasting", txId);
 
     const chain = getChain("base") as any;
     let txHash: string;
 
-    if (chain.transferUsdcMPC) {
-      // Live mode: real onchain transfer from agent's MPC wallet
-      const result = await chain.transferUsdcMPC(
-        fullKeyHex,
-        req.recipientAddress,
-        netAmountUsdc
-      );
+    if (chain.transferUsdc && process.env.HOT_WALLET_KEY) {
+      // Live mode: real onchain transfer from vault hot wallet
+      const result = await chain.transferUsdc({
+        fromAddress: "vault",
+        toAddress: req.recipientAddress,
+        amountUsdc: netAmountUsdc,
+        signature: "mpc-verified",
+        memo: `Payment from agent ${req.agentId}`,
+      });
       txHash = result.txHash;
 
       if (!result.confirmed) {
@@ -245,7 +260,7 @@ export async function processPayment(req: PaymentRequest): Promise<PaymentResult
       permissionChecks: permChecks,
       feeUsdc,
       netAmountUsdc,
-      mpcSignatureId: signResult.signatureId,
+      mpcSignatureId: null,
       txHash,
     };
   } catch (error: any) {
